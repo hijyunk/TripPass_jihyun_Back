@@ -16,8 +16,8 @@ import uuid
 from datetime import datetime
 import json
 import httpx
-import openai
 from ImageGeneration import imageGeneration
+from GetWeather import get_weather
 
 app = FastAPI()
 origins =[
@@ -46,7 +46,7 @@ KAKAO_CLIENT_ID = get_secret("KAKAO_CLIENT_ID")
 KAKAO_REDIRECT_URI = get_secret("KAKAO_REDIRECT_URI")
 OPENAI_API_KEY = get_secret("OPENAI_API_KEY")
 DEEPL_AUTH_KEY = get_secret("DEEPL_AUTH_KEY")
-
+WEATHER_API_KEY = get_secret("WEATHER_API_KEY")
 
 
 DB_URL = f'mysql+pymysql://{SQLUSERNAME}:{SQLPASSWORD}@{HOSTNAME}:{PORT}/{SQLDBNAME}'
@@ -130,6 +130,16 @@ async def getMyTripsTable(userId: str = None, tripId: str = None):
         return {"result code": 200, "response": results}
     finally:
         session.close()
+
+@app.get('/getWeather', description="main trip 지역의 날씨 정보 가져오기")
+async def getWeatherInfo(city: str):
+    # get_weather 함수를 호출하여 날씨 정보를 가져옴
+    try:
+        weather, temp = get_weather(city, WEATHER_API_KEY, DEEPL_AUTH_KEY)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"city": city, "weather": weather, "temperature": temp}
 
 @app.get('/getTripPlans', description = "mySQL tripPlans Table 접근해서 정보 가져오기, tripId는 선택사항")
 async def getTripPlansTable(tripId: str = None):
