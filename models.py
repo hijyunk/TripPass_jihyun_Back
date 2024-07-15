@@ -10,7 +10,8 @@ class user(Base):
     id = Column(String(36), nullable=False)
     passwd = Column(String(255), nullable=False)
     nickname = Column(String(50), nullable=False)
-    profileImage = Column(LONGBLOB)
+    profileImage = Column(LONGBLOB,  nullable=True)
+    socialProfileImage = Column(String(255), nullable=True)
     birthDate = Column(String(36), nullable=False)
     sex = Column(String(36), nullable=False)
     personality = Column(JSON, nullable=True)
@@ -47,24 +48,14 @@ class crew(Base):
     __tablename__ = 'crew'
     crewId = Column(String(36), primary_key=True)
     planId = Column(String(36), nullable=False)
-    userId = Column(String(36), nullable=False)
     tripId = Column(String(36), nullable=False)
-    date = Column(String(36), nullable=False)
-    time = Column(String(36), nullable=False)
-    place = Column(String(255), nullable=False)
     title = Column(String(60), nullable=False)
     contact = Column(String(36), nullable=False)
     note = Column(String(255), nullable=False)
     numOfMate = Column(INT, nullable=False)
     banner = Column(LargeBinary, nullable=True)
-    tripmate = Column(JSON, nullable=True)
-    sincheongIn = Column(JSON, nullable=True)
-    address = Column(String(100), nullable=False)
-    latitude = Column(FLOAT, nullable=False)
-    longitude = Column(FLOAT, nullable=False)
-    contry = Column(String(36), nullable=False)
-    city = Column(String(36), nullable=False)
-
+    tripmate = Column(String(255), nullable=True)
+    sincheongIn = Column(String(255), nullable=True)
 
 class joinRequests(Base):
     __tablename__ = 'joinRequests'

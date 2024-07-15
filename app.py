@@ -3,6 +3,7 @@ import uvicorn
 from fastapi import FastAPI,status, File, UploadFile, Form, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import datetime as datetime
+from fastapi.responses import RedirectResponse
 from models import user, myTrips, joinRequests, tripPlans, crew
 from sqlalchemy import *
 from sqlalchemy.orm import sessionmaker
@@ -14,6 +15,9 @@ from fastapi.responses import JSONResponse
 import uuid
 from datetime import datetime
 import json
+import httpx
+import openai
+from ImageGeneration import imageGeneration
 
 app = FastAPI()
 origins =[
@@ -38,6 +42,12 @@ SQLUSERNAME = get_secret("MYSQL_USER_NAME")
 SQLPASSWORD = get_secret("MYSQL_PASSWORD")
 SQLDBNAME = get_secret("MYSQL_DB_NAME")
 HOSTNAME = get_secret("MYSQL_HOST")
+KAKAO_CLIENT_ID = get_secret("KAKAO_CLIENT_ID")
+KAKAO_REDIRECT_URI = get_secret("KAKAO_REDIRECT_URI")
+OPENAI_API_KEY = get_secret("OPENAI_API_KEY")
+DEEPL_AUTH_KEY = get_secret("DEEPL_AUTH_KEY")
+
+
 
 DB_URL = f'mysql+pymysql://{SQLUSERNAME}:{SQLPASSWORD}@{HOSTNAME}:{PORT}/{SQLDBNAME}'
 
@@ -94,11 +104,13 @@ async def getUserTable(userId: str = None):
         session.close()
 
 @app.get('/getMyTrips', description = "mySQL myTrips Table 접근해서 정보 가져오기, tripId는 선택사항")
-async def getMyTripsTable(userId: str = None):
+async def getMyTripsTable(userId: str = None, tripId: str = None):
     try:
         query = session.query(myTrips)
         if userId is not None:
             query = query.filter(myTrips.userId == userId)
+        if tripId is not None:
+            query = query.filter(myTrips.tripId == tripId)
         mytrips_data = query.all()
         results = []
         for mytrip in mytrips_data:
@@ -308,6 +320,7 @@ async def insertUserTable(
     sex: str = Form(...),
     personality: str = Form(None),
     profileImage: UploadFile = File(None),
+    socialProfileImage : str = Form(None),
     mainTrip: str = Form(None)
     
 ):
@@ -315,7 +328,7 @@ async def insertUserTable(
     image_data = await profileImage.read() if profileImage else None
     try:
         userId = str(uuid.uuid4())
-        new_user = user(userId=userId, id=id, passwd=passwd, nickname=nickname, profileImage=image_data, birthDate=birthDate, sex=sex, personality=personality,
+        new_user = user(userId=userId, id=id, passwd=passwd, nickname=nickname, profileImage=image_data, birthDate=birthDate, sex=sex, personality=personality,socialProfileImage=socialProfileImage,
         mainTrip=mainTrip)
         session.add(new_user)
         session.commit()
@@ -334,12 +347,24 @@ async def insertMyTripsTable(
     startDate: str = Form(...),
     endDate: str = Form(...),
     memo: str = Form(None),
-    banner: UploadFile = File(None)
 ):
-    image_data = await banner.read() if banner else None
+    image_data = imageGeneration(contry, city, OPENAI_API_KEY, DEEPL_AUTH_KEY)
+    image_data = base64.b64decode(image_data)
+    
     try:
         tripId = str(uuid.uuid4())
-        new_trip = myTrips(tripId=tripId, userId=userId, title=title, contry=contry, city=city, startDate=startDate, endDate=endDate, memo=memo, banner=image_data)
+        new_trip = myTrips(
+            tripId=tripId, 
+            userId=userId, 
+            title=title, 
+            contry=contry, 
+            city=city, 
+            startDate=startDate, 
+            endDate=endDate, 
+            memo=memo, 
+            banner=image_data
+        )
+        
         user_record = session.query(user).filter(user.userId == userId).first()
         if user_record and user_record.mainTrip is None:
             user_record.mainTrip = tripId
@@ -349,8 +374,6 @@ async def insertMyTripsTable(
         session.commit()
         session.refresh(new_trip)
         return {"result code": 200, "response": tripId}
-
-        
     finally:
         session.close()
 
@@ -463,14 +486,7 @@ async def updateUserProfileImage(
             profile_image_data = base64.b64encode(user_data.profileImage).decode('utf-8')
             session.commit()
             return {
-                "userId": user_data.userId,
-                "id": user_data.id,
-                "nickname": user_data.nickname,
-                "birthDate": user_data.birthDate,
-                "sex": user_data.sex,
-                "personality": user_data.personality,
-                "profileImage": profile_image_data,
-                "mainTrip": user_data.mainTrip
+                "result code": 200, "response": profile_image_data
             }
         else:
             return {"result code": 404, "response": "User not found"}
@@ -665,5 +681,79 @@ async def update_user_main_trip(request: Request):
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+# 카카오 소셜 로그인
+@app.get("/login/kakao")
+def kakao_login():
+    kakao_auth_url = f"https://kauth.kakao.com/oauth/authorize?client_id={KAKAO_CLIENT_ID}&redirect_uri={KAKAO_REDIRECT_URI}&response_type=code"
+    return RedirectResponse(url=kakao_auth_url)
+@app.get("/login/callback")
+async def kakao_login_callback(code: str):
+    session = sqldb.sessionmaker()
+    try:
+        token_url = "https://kauth.kakao.com/oauth/token"
+        token_params = {
+            "grant_type": "authorization_code",
+            "client_id": KAKAO_CLIENT_ID,
+            "redirect_uri": KAKAO_REDIRECT_URI,
+            "code": code,
+        }
+
+        async with httpx.AsyncClient() as client:
+            token_response = await client.post(token_url, data=token_params)
+            if token_response.status_code != 200:
+                raise HTTPException(status_code=token_response.status_code, detail="Failed to fetch access token from Kakao")
+
+            token_data = token_response.json()
+            access_token = token_data.get("access_token")
+
+            profile_url = "https://kapi.kakao.com/v2/user/me"
+            headers = {"Authorization": f"Bearer {access_token}"}
+            profile_response = await client.get(profile_url, headers=headers)
+            if profile_response.status_code != 200:
+                raise HTTPException(status_code=profile_response.status_code, detail="Failed to fetch user profile from Kakao")
+
+            profile_data = profile_response.json()
+
+            kakao_id = profile_data["id"]
+            nickname = profile_data["properties"]["nickname"]
+            social_profile_image = profile_data["properties"].get("profile_image", "")
+            user_id = "소셜 로그인 회원입니다"
+
+            # 기존 사용자 확인 및 생성/업데이트
+            user_entry = session.query(user).filter(user.id == kakao_id).first()
+            if not user_entry:
+                user_entry = user(
+                    userId=str(uuid.uuid4()),
+                    id=user_id,
+                    passwd="",  
+                    nickname=nickname,
+                    socialProfileImage=social_profile_image,
+                    birthDate='2024-01-01',
+                    sex="None",
+                    personality=None,
+                    mainTrip=""
+                )
+                session.add(user_entry)
+            else:
+                user_entry.nickname = nickname
+                user_entry.socialProfileImage = social_profile_image
+
+            session.commit()
+
+            profile_image_data = base64.b64encode(user_entry.profileImage).decode('utf-8') if user_entry.profileImage else None
+
+            return {
+                "userId": user_entry.userId,
+                "id": user_entry.id,
+                "nickname": user_entry.nickname,
+                "birthDate": user_entry.birthDate,
+                "sex": user_entry.sex,
+                "personality": user_entry.personality,
+                "socialProfileImage": user_entry.socialProfileImage,
+                "mainTrip": user_entry.mainTrip
+            }
     finally:
         session.close()
