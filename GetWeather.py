@@ -17,6 +17,6 @@ def get_weather(city, WEATHER_API_KEY, DEEPL_AUTH_KEY):
     if 'weather' not in data or 'main' not in data:
         raise Exception("Invalid response from weather API")
     
-    weather = data['weather'][0]['description']
+    weather = data['weather'][0]['main']
     temp = data['main']['temp']
     return weather, temp

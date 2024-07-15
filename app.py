@@ -138,7 +138,6 @@ async def getWeatherInfo(city: str):
         weather, temp = get_weather(city, WEATHER_API_KEY, DEEPL_AUTH_KEY)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
     return {"city": city, "weather": weather, "temperature": temp}
 
 @app.get('/getTripPlans', description = "mySQL tripPlans Table 접근해서 정보 가져오기, tripId는 선택사항")
