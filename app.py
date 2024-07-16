@@ -2,7 +2,7 @@ import os
 import uvicorn
 from fastapi import FastAPI, File, UploadFile, Form, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-import datetime as datetime
+import datetime as datetime, timedelta
 from fastapi.responses import RedirectResponse, JSONResponse
 from models import user, myTrips, joinRequests, tripPlans, crew
 from sqlalchemy import *
