@@ -9,7 +9,6 @@ from sqlalchemy import *
 from sqlalchemy.orm import sessionmaker
 import json
 import base64
-from dotenv import load_dotenv
 import uuid
 from datetime import datetime
 import httpx
@@ -876,4 +875,41 @@ async def kakao_login_callback(code: str):
                 "mainTrip": user_entry.mainTrip
             }
     finally:
+        session.close()
+
+#지현 - 트립 삭제 기능
+@app.delete("/deleteTrip", description="mySQL myTrip Table에서 트립 삭제, crew가 있는 trip은 제외")
+async def delete_trip(request: Request):
+    session = sqldb.sessionmaker()
+    try:
+        data = await request.json()
+        user_id = data.get('userId')
+        trip_id = data.get('tripId')
+
+        if not user_id or not trip_id:
+            raise HTTPException(status_code=400, detail="userId와 tripId가 필요합니다.")
+
+        # crew 테이블에서 해당 tripId가 존재하는지 확인
+        crew_count = session.query(crew).filter(crew.tripId == trip_id).count()
+        if crew_count > 0:
+            raise HTTPException(status_code=400, detail="크루 참여가 있는 여행은 삭제할 수 없습니다.")
+
+        # tripPlans 테이블에서 해당 tripId와 관련된 모든 계획 삭제
+        session.query(tripPlans).filter(tripPlans.tripId == trip_id).delete()
+
+        # myTrips 테이블에서 해당 tripId 삭제
+        session.query(myTrips).filter(myTrips.tripId == trip_id, myTrips.userId == user_id).delete()
+
+        # 변경사항 커밋
+        session.commit()
+        return {"result code": 200, "message": "트립이 성공적으로 삭제되었습니다."}
+    except HTTPException as e:
+        # HTTPException 발생 시 그대로 전달
+        raise e
+    except Exception as e:
+        # 기타 예외 발생 시 500 오류 반환
+        session.rollback()
+        raise HTTPException(status_code=500, detail="서버 내부 오류가 발생했습니다.")
+    finally:
+        # 세션 종료
         session.close()

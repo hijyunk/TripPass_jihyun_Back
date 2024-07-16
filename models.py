@@ -62,12 +62,6 @@ class joinRequests(Base):
     __tablename__ = 'joinRequests'
     requestId = Column(INT, primary_key=True, autoincrement=True)
     crewId = Column(String(36), nullable=False)
-    planId = Column(String(36), nullable=False)
     userId = Column(String(36), nullable=False)
     tripId = Column(String(36), nullable=False)
-    nickname = Column(String(50), nullable=False)
-    profileImage = Column(LargeBinary, nullable=True)
-    birthDate = Column(String(36), nullable=False)
-    sex = Column(String(36), nullable=False)
-    personality = Column(JSON, nullable=False)
     status = Column(INT, nullable=False)
