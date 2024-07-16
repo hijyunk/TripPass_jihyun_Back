@@ -1,6 +1,6 @@
 import os
 import uvicorn
-from fastapi import FastAPI,status, File, UploadFile, Form, Depends, HTTPException, Request
+from fastapi import FastAPI, File, UploadFile, Form, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import datetime as datetime
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -10,7 +10,6 @@ from sqlalchemy.orm import sessionmaker
 import json
 import base64
 import uuid
-from datetime import datetime
 import httpx
 from passlib.context import CryptContext
 from ImageGeneration import imageGeneration
@@ -149,12 +148,12 @@ async def getTripPlansTable(tripId: str = None):
         session.close()
 
 #tripplan 날짜별로 가져올거야 지영아 알겠지? 그니까 어디서 써야해 new crew만들때 쓰면 돼~!
-@app.get('/getTripPlansDate', description = "mySQL tripPlans Table 접근해서 정보 가져오기, date, userId 필수사항")
-async def getTripPlansDateTable(date: str , userId : str):
+@app.get('/getTripPlansDate', description = "mySQL tripPlans Table 접근해서 정보 가져오기, date, tripId 필수사항")
+async def getTripPlansDateTable(date: str , tripId : str):
     try:
         query = session.query(tripPlans)
-        if date is not None and userId is not None:
-            query = query.filter(tripPlans.date == date and tripPlans.userId == userId)
+        if date is not None and tripId is not None:
+            query = query.filter(tripPlans.tripId == tripId, tripPlans.date == date)
         tripplans_data = query.all()
         return {"result code": 200, "response": tripplans_data}
     finally:
@@ -185,6 +184,41 @@ async def getCrewTable(crewId: str = None):
         return {"result code": 200, "response": results}
     finally:
         session.close()
+
+# 세영 dashboard crew 에서 사용
+@app.get('/getThisTripCrew', description="tripId가져와서 이번 여행에 있는 crew 다 가져오기")
+async def getThisTripCrewTable(tripId: str):
+    try:
+        query = session.query(tripPlans, crew).filter(crew.tripId == tripId, tripPlans.planId == crew.planId)
+        crew_data = query.all()
+        results = []
+        for tripplan, crews in crew_data:
+            crew_dict = {
+                "crewId": crews.crewId,
+                "planId": crews.planId,
+                "tripId": crews.tripId,
+                "title": crews.title,
+                "contact": crews.contact,
+                "note": crews.note,
+                "numOfMate": crews.numOfMate,
+                "banner": base64.b64encode(crews.banner).decode('utf-8') if crews.banner else None,
+                "tripmate": crews.tripmate,
+                "sincheongIn": crews.sincheongIn,
+                "date": tripplan.date,
+                "time": tripplan.time,
+                "place": tripplan.place,
+                "address": tripplan.address,
+                "latitude": tripplan.latitude,
+                "longitude": tripplan.longitude
+            }
+            results.append(crew_dict)
+        return {"result code": 200, "response": results}
+    finally:
+        session.close()
+
+
+
+
 
 
 @app.get('/getMyCrew', description = "mySQL crew Table 접근해서 정보 가져오기, userId, tripId 필수로 넣기 ")
@@ -228,26 +262,36 @@ async def getMyCrewTable(tripId : str, userId : str):
     finally:
         session.close()
 
-@app.get('/getCrewCalc', description="mySQL crew Table 접근해서 정보 가져오기, date, contry, city 입력 필수")
-async def getCrewTableCalc(date: str = None, contry: str = None, city: str = None):
-    if not date or not contry or not city:
-        raise HTTPException(status_code=400, detail="date, contry, and city parameters are required")
-    
+@app.get('/getCrewCalc', description="mySQL crew Table 접근해서 정보 가져오기, tripId 입력 필수")
+async def getCrewTableCalc(mainTrip: str):
     try:
-        tripplans_query = session.query(tripPlans).filter(tripPlans.date == date, tripPlans.crewId != None)
-        tripplans_data = tripplans_query.all()
+        # getMyTrips 엔드포인트에서 tripId로 정보를 가져옴
+        mytrips_query = session.query(myTrips).filter(myTrips.tripId == mainTrip)
+        mytrips_data = mytrips_query.first()
         
-        if not tripplans_data:
-            raise HTTPException(status_code=404, detail="No trip plans found for the given date")
+        if not mytrips_data:
+            raise HTTPException(status_code=404, detail="No trip found for the given tripId")
+
+        contry = mytrips_data.contry
+        city = mytrips_data.city
+        start_date = mytrips_data.startDate
+        end_date = mytrips_data.endDate
+        
+        # 날짜 범위를 생성
+        delta = timedelta(days=1)
 
         results = []
-        
-        for plan in tripplans_data:
-            mytrips_query = session.query(myTrips).filter(myTrips.tripId == plan.tripId, myTrips.contry == contry, myTrips.city == city)
-            mytrips_data = mytrips_query.first()
-            
-            if mytrips_data:
-                crew_query = session.query(crew).filter(crew.planId == plan.planId).first()
+
+        # 날짜 범위를 반복하여 각 날짜에 대한 tripPlans와 crew 정보를 가져옴
+        current_date = start_date
+        while current_date <= end_date:
+            tripplans_query = session.query(tripPlans).filter(and_(tripPlans.date == current_date, tripPlans.crewId != None))
+            tripplans_data = tripplans_query.all()
+            for plan in tripplans_data:
+                if plan.tripId == mainTrip:
+                    continue
+                
+                crew_query = session.query(crew).filter(and_(crew.planId == plan.planId, myTrips.contry == contry, myTrips.city == city)).first()
                 
                 if crew_query:
                     crew_dict = {
@@ -268,10 +312,14 @@ async def getCrewTableCalc(date: str = None, contry: str = None, city: str = Non
                         "address": plan.address,
                         "latitude": plan.latitude,
                         "longitude": plan.longitude,
-                        "contry": mytrips_data.contry,
-                        "city": mytrips_data.city
+                        "contry": contry,
+                        "city": city,
+                        "startDate": start_date,
+                        "endDate": end_date
                     }
                     results.append(crew_dict)
+
+            current_date += delta
         
         if not results:
             raise HTTPException(status_code=404, detail="No matching crew data found")
@@ -483,73 +531,33 @@ async def insertCrewTable(
         session.close()
 
 #지영 - 수정중
-# @app.post('/insertJoinRequests', description="mySQL joinRequests Table에 추가, requestId는 auto increment로 생성")
-# async def insertJoinRequestsTable(
-#     userId : str = Form(...),
-#     tripId : str = Form(...),
-#     crewId : str = Form(...)
-# ):
-#     try:
-#         new_joinRequest = joinRequests(
-#             userId=userId, 
-#             tripId=tripId,
-#             crewId=crewId,
-#             status = 0
-#         )
-#         query = session.query(crew)
-#         query = query.filter(crew.crewId == crewId)
-#         crew_data = query.first()
-#         session.add(new_joinRequest)
-#         sincheongIn = crew_data.sincheongIn
-#         if sincheongIn is None:
-#             crew_data.sincheongIn = userId
-#         elif userId in sincheongIn:
-#             return {"result code": 404, "response": "Already joined"}
-#         else:
-#             crew_data.sincheongIn = str(sincheongIn) + "," + userId
-#         session.commit()
-#         session.refresh(new_joinRequest)
-#         return {"result code": 200, "response": crewId}
-#     finally:
-#         session.close()
-
 @app.post('/insertJoinRequests', description="mySQL joinRequests Table에 추가, requestId는 auto increment로 생성")
 async def insertJoinRequestsTable(
-    userId: str = Form(...),
-    crewId: str = Form(...),
+    userId : str = Form(...),
+    tripId : str = Form(...),
+    crewId : str = Form(...)
 ):
-    session = sqldb.sessionmaker()
     try:
-        crew_data = session.query(crew).filter(crew.crewId == crewId).first()
-        if not crew_data:
-            return {"result code": 404, "response": "Crew not found"}
-        
-        tripId = crew_data.tripId
-
         new_joinRequest = joinRequests(
             userId=userId, 
             tripId=tripId,
             crewId=crewId,
-            status=0
+            status = 0
         )
+        query = session.query(crew)
+        query = query.filter(crew.crewId == crewId)
+        crew_data = query.first()
         session.add(new_joinRequest)
-        session.commit()
-        session.refresh(new_joinRequest)
-
         sincheongIn = crew_data.sincheongIn
         if sincheongIn is None:
             crew_data.sincheongIn = userId
-        elif userId in sincheongIn.split(","):
+        elif userId in sincheongIn:
             return {"result code": 404, "response": "Already joined"}
         else:
-            crew_data.sincheongIn = f"{sincheongIn},{userId}"
-        
+            crew_data.sincheongIn = str(sincheongIn) + "," + userId
         session.commit()
-
-        return {"result code": 200, "response": new_joinRequest.requestId}
-    except Exception as e:
-        session.rollback()
-        return {"result code": 500, "response": str(e)}
+        session.refresh(new_joinRequest)
+        return {"result code": 200, "response": crewId}
     finally:
         session.close()
 
@@ -877,7 +885,6 @@ async def kakao_login_callback(code: str):
     finally:
         session.close()
 
-#지현 - 트립 삭제 기능
 @app.delete("/deleteTrip", description="mySQL myTrip Table에서 트립 삭제, crew가 있는 trip은 제외")
 async def delete_trip(request: Request):
     session = sqldb.sessionmaker()
