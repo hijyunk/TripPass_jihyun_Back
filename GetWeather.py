@@ -1,10 +1,9 @@
 import requests
-import deepl
+from deep_translator import GoogleTranslator
 
-def get_weather(city, WEATHER_API_KEY, DEEPL_AUTH_KEY):
+def getWeather(city, WEATHER_API_KEY):
     # 영어로 번역
-    translator = deepl.Translator(DEEPL_AUTH_KEY)
-    city = str(translator.translate_text(city, target_lang='EN-US'))
+    city = GoogleTranslator(source='ko', target='en').translate(city)
     
     api = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
     

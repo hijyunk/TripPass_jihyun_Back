@@ -57,6 +57,7 @@ class crew(Base):
     tripmate = Column(String(255), nullable=True)
     sincheongIn = Column(String(255), nullable=True)
 
+
 class joinRequests(Base):
     __tablename__ = 'joinRequests'
     requestId = Column(INT, primary_key=True, autoincrement=True)

@@ -3,21 +3,19 @@ import uvicorn
 from fastapi import FastAPI,status, File, UploadFile, Form, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import datetime as datetime
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from models import user, myTrips, joinRequests, tripPlans, crew
 from sqlalchemy import *
 from sqlalchemy.orm import sessionmaker
 import json
-from typing import Optional
 import base64
 from dotenv import load_dotenv
-from fastapi.responses import JSONResponse
 import uuid
 from datetime import datetime
-import json
 import httpx
+from passlib.context import CryptContext
 from ImageGeneration import imageGeneration
-from GetWeather import get_weather
+from GetWeather import getWeather
 
 app = FastAPI()
 origins =[
@@ -45,9 +43,7 @@ HOSTNAME = get_secret("MYSQL_HOST")
 KAKAO_CLIENT_ID = get_secret("KAKAO_CLIENT_ID")
 KAKAO_REDIRECT_URI = get_secret("KAKAO_REDIRECT_URI")
 OPENAI_API_KEY = get_secret("OPENAI_API_KEY")
-DEEPL_AUTH_KEY = get_secret("DEEPL_AUTH_KEY")
 WEATHER_API_KEY = get_secret("WEATHER_API_KEY")
-
 
 DB_URL = f'mysql+pymysql://{SQLUSERNAME}:{SQLPASSWORD}@{HOSTNAME}:{PORT}/{SQLDBNAME}'
 
@@ -73,6 +69,8 @@ class db_conn:
         return conn
 sqldb = db_conn()
 session = sqldb.sessionmaker()
+
+bcrypt_context = CryptContext(schemes=['bcrypt'], deprecated='auto')
 
 @app.get('/')
 async def healthCheck():
@@ -133,9 +131,9 @@ async def getMyTripsTable(userId: str = None, tripId: str = None):
 
 @app.get('/getWeather', description="main trip 지역의 날씨 정보 가져오기")
 async def getWeatherInfo(city: str):
-    # get_weather 함수를 호출하여 날씨 정보를 가져옴
+    # getWeather 함수를 호출하여 날씨 정보를 가져옴
     try:
-        weather, temp = get_weather(city, WEATHER_API_KEY, DEEPL_AUTH_KEY)
+        weather, temp = getWeather(city, WEATHER_API_KEY)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     return {"city": city, "weather": weather, "temperature": temp}
@@ -191,7 +189,7 @@ async def getCrewTable(crewId: str = None):
 
 
 @app.get('/getMyCrew', description = "mySQL crew Table 접근해서 정보 가져오기, userId, tripId 필수로 넣기 ")
-async def getMyCrewTable( tripId : str, userId : str):
+async def getMyCrewTable(tripId : str, userId : str):
     try:
         query = session.query(crew)
         query = query.filter(and_(crew.tripId == tripId, crew.tripmate.like(f"%{userId}%")))
@@ -203,7 +201,7 @@ async def getMyCrewTable( tripId : str, userId : str):
             query = query.filter(tripPlans.planId == crews.planId)
             tripplans_data = query.first()
             query = session.query(myTrips)
-            query = query.filter(myTrips.tripId == crew.tripId)
+            query = query.filter(myTrips.tripId == crews.tripId)
             mytrips_data = query.first()
             crew_dict = {
                 "crewId": crews.crewId,
@@ -231,16 +229,12 @@ async def getMyCrewTable( tripId : str, userId : str):
     finally:
         session.close()
 
-
 @app.get('/getCrewCalc', description="mySQL crew Table 접근해서 정보 가져오기, date, contry, city 입력 필수")
 async def getCrewTableCalc(date: str = None, contry: str = None, city: str = None):
-    # 요청 파라미터가 모두 제공되었는지 확인
     if not date or not contry or not city:
         raise HTTPException(status_code=400, detail="date, contry, and city parameters are required")
     
-    
     try:
-        # tripPlans 테이블에서 date가 일치하고 crewId가 null이 아닌 플랜들을 가져오기
         tripplans_query = session.query(tripPlans).filter(tripPlans.date == date, tripPlans.crewId != None)
         tripplans_data = tripplans_query.all()
         
@@ -249,13 +243,11 @@ async def getCrewTableCalc(date: str = None, contry: str = None, city: str = Non
 
         results = []
         
-        # 가져온 tripPlans 데이터에서 각 트립 플랜의 tripId를 사용하여 myTrips 테이블에서 검색
         for plan in tripplans_data:
             mytrips_query = session.query(myTrips).filter(myTrips.tripId == plan.tripId, myTrips.contry == contry, myTrips.city == city)
             mytrips_data = mytrips_query.first()
             
             if mytrips_data:
-                # 관련된 crew 데이터 조회
                 crew_query = session.query(crew).filter(crew.planId == plan.planId).first()
                 
                 if crew_query:
@@ -280,45 +272,64 @@ async def getCrewTableCalc(date: str = None, contry: str = None, city: str = Non
                         "contry": mytrips_data.contry,
                         "city": mytrips_data.city
                     }
-                    # 결과 리스트에 추가
                     results.append(crew_dict)
         
         if not results:
             raise HTTPException(status_code=404, detail="No matching crew data found")
 
-        # 최종 결과 반환
         return {"result code": 200, "response": results}
     except Exception as e:
-        # 예외 발생 시 500 에러 반환
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        # 데이터베이스 세션 종료
         session.close()
 
-@app.get('/getJoinRequests', description = "mySQL joinRequests Table 접근해서 정보 가져오기, joinId는 선택사항")
-async def getJoinRequestsTable(requestId: str = None):
+#지영 - 수정중
+# @app.get('/getJoinRequests', description = "mySQL joinRequests Table 접근해서 정보 가져오기, joinId는 선택사항")
+# async def getJoinRequestsTable(requestId: str = None):
+#     try:
+#         query = session.query(joinRequests)
+#         if requestId is not None:
+#             query = query.filter(joinRequests.requestId == requestId)
+#         joinrequests_data = query.all()
+#         results = []
+#         for join in joinrequests_data:
+#             join_dict = {
+#                 "requestId": join.requestId,
+#                 "userId": join.userId,
+#                 "tripId": join.tripId,
+#                 "crewId": join.crewId,
+#                 "status": join.status
+#             }
+#             results.append(join_dict)
+#         return {"result code": 200, "response": results}
+#     finally:
+#         session.close()
+@app.get('/getJoinRequests', description="mySQL joinRequests Table 접근해서 정보 가져오기, crewId는 선택사항")
+async def getJoinRequestsTable(userId: str = None):
+    session = sqldb.sessionmaker()
     try:
-        query = session.query(joinRequests)
-        if requestId is not None:
-            query = query.filter(joinRequests.requestId == requestId)
-        joinrequests_data = query.all()
+        if userId:
+            crew_data = session.query(crew).filter(crew.tripmate.like(f"%{userId}%")).all()
+            crew_ids = [c.crewId for c in crew_data]
+            join_requests = session.query(joinRequests).filter(joinRequests.crewId.in_(crew_ids), joinRequests.status == 0).all()
+        else:
+            join_requests = session.query(joinRequests).filter(joinRequests.status == 0).all()
+
         results = []
-        for join in joinrequests_data:
-            join_dict = {
-                "requestId": join.requestId,
-                "userId": join.userId,
-                "tripId": join.tripId,
-                "crewId": join.crewId,
-                "status": join.status
+        for request in join_requests:
+            user_data = session.query(user).filter(user.userId == request.userId).first()
+            request_dict = {
+                "requestId": request.requestId,
+                "crewId": request.crewId,
+                "userId": request.userId,
+                "tripId": request.tripId,
+                "nickname": user_data.nickname,
+                "profileImage": base64.b64encode(user_data.profileImage).decode('utf-8') if user_data.profileImage else None,
             }
-            results.append(join_dict)
+            results.append(request_dict)
         return {"result code": 200, "response": results}
     finally:
         session.close()
-
-# @app.get('/getCrewRecommend', description = "mySQL crew Table 접근해서 정보 가져오기, 날짜, 도시 입력시 그거 기준으로 가져옴")
-# async def getCrewRecommendTable(contry: str, city: str):
-#     try:
 
 @app.post('/insertUser', description="mySQL user Table에 추가, userId는 uuid로 생성")
 async def insertUserTable(
@@ -335,10 +346,22 @@ async def insertUserTable(
 ):
     
     image_data = await profileImage.read() if profileImage else None
+    hashed_password = bcrypt_context.hash(passwd)
+
     try:
         userId = str(uuid.uuid4())
-        new_user = user(userId=userId, id=id, passwd=passwd, nickname=nickname, profileImage=image_data, birthDate=birthDate, sex=sex, personality=personality,socialProfileImage=socialProfileImage,
-        mainTrip=mainTrip)
+        new_user = user(
+            userId=userId, 
+            id=id, 
+            passwd=hashed_password, 
+            nickname=nickname, 
+            profileImage=image_data, 
+            birthDate=birthDate, 
+            sex=sex, 
+            personality=personality, 
+            socialProfileImage=socialProfileImage,
+            mainTrip=mainTrip
+        )
         session.add(new_user)
         session.commit()
         session.refresh(new_user)
@@ -357,7 +380,7 @@ async def insertMyTripsTable(
     endDate: str = Form(...),
     memo: str = Form(None),
 ):
-    image_data = imageGeneration(contry, city, OPENAI_API_KEY, DEEPL_AUTH_KEY)
+    image_data = imageGeneration(contry, city, OPENAI_API_KEY)
     image_data = base64.b64decode(image_data)
     
     try:
@@ -387,6 +410,7 @@ async def insertMyTripsTable(
         session.close()
 
 
+
 @app.post('/insertTripPlans', description="mySQL tripPlans Table에 추가, planId는 uuid로 생성")
 async def insertTripPlansTable(
     userId :  str = Form(...),
@@ -413,68 +437,120 @@ async def insertTripPlansTable(
 
 @app.post('/insertCrew', description="mySQL crew Table에 추가, crewId는 uuid로 생성, insert data 중 일부는 tripPlans planId를 이용해 가져오는거임")
 async def insertCrewTable(
-    planId : str = Form(...),
-    title : str = Form(...),
-    contact : str =Form(...),
-    note : str = Form(...),
-    numOfMate : str = Form(...),
-    banner : UploadFile = File(None)
+    planId: str = Form(...),
+    title: str = Form(...),
+    contact: str = Form(...),
+    note: str = Form(...),
+    numOfMate: str = Form(...),
+    banner: UploadFile = File(None)
 ):
     image_data = await banner.read() if banner else None
+    session = sqldb.sessionmaker()
     try:
-        query = session.query(tripPlans)
-        query = query.filter(tripPlans.planId == planId)
-        tripplans_data = query.all()
-        userId = tripplans_data[0].userId
-        tripId = tripplans_data[0].tripId
-        mytrips_data = session.query(myTrips).filter(myTrips.tripId == tripId).first()
+        # Get tripPlans data using planId
+        trip_plan = session.query(tripPlans).filter(tripPlans.planId == planId).first()
+        if not trip_plan:
+            return {"result code": 404, "response": "Trip plan not found"}
         
+        userId = trip_plan.userId
+        tripId = trip_plan.tripId
+        
+        # Create new crew
         new_crew = crew(
-            crewId = str(uuid.uuid4()), 
-            planId = planId,
-            tripId = tripId,
-            title = title,
-            contact = contact,
-            note = note,
-            numOfMate = numOfMate,
-            banner = image_data,
-            tripmate = userId
+            crewId=str(uuid.uuid4()), 
+            planId=planId,
+            tripId=tripId,
+            title=title,
+            contact=contact,
+            note=note,
+            numOfMate=numOfMate,
+            banner=image_data,
+            tripmate=userId
         )
-        tripplans_data[0].crewId = new_crew.crewId
+        
         session.add(new_crew)
         session.commit()
         session.refresh(new_crew)
+        
+        # Update tripPlans table with new crewId
+        trip_plan.crewId = new_crew.crewId
+        session.commit()
+
         return {"result code": 200, "response": new_crew.crewId}
+    except Exception as e:
+        session.rollback()
+        return {"result code": 500, "response": str(e)}
     finally:
         session.close()
-    
+
+#지영 - 수정중
+# @app.post('/insertJoinRequests', description="mySQL joinRequests Table에 추가, requestId는 auto increment로 생성")
+# async def insertJoinRequestsTable(
+#     userId : str = Form(...),
+#     tripId : str = Form(...),
+#     crewId : str = Form(...)
+# ):
+#     try:
+#         new_joinRequest = joinRequests(
+#             userId=userId, 
+#             tripId=tripId,
+#             crewId=crewId,
+#             status = 0
+#         )
+#         query = session.query(crew)
+#         query = query.filter(crew.crewId == crewId)
+#         crew_data = query.first()
+#         session.add(new_joinRequest)
+#         sincheongIn = crew_data.sincheongIn
+#         if sincheongIn is None:
+#             crew_data.sincheongIn = userId
+#         elif userId in sincheongIn:
+#             return {"result code": 404, "response": "Already joined"}
+#         else:
+#             crew_data.sincheongIn = str(sincheongIn) + "," + userId
+#         session.commit()
+#         session.refresh(new_joinRequest)
+#         return {"result code": 200, "response": crewId}
+#     finally:
+#         session.close()
+
 @app.post('/insertJoinRequests', description="mySQL joinRequests Table에 추가, requestId는 auto increment로 생성")
 async def insertJoinRequestsTable(
-    userId : str = Form(...),
-    tripId : str = Form(...),
-    crewId : str = Form(...)
+    userId: str = Form(...),
+    crewId: str = Form(...),
 ):
+    session = sqldb.sessionmaker()
     try:
+        crew_data = session.query(crew).filter(crew.crewId == crewId).first()
+        if not crew_data:
+            return {"result code": 404, "response": "Crew not found"}
+        
+        tripId = crew_data.tripId
+
         new_joinRequest = joinRequests(
             userId=userId, 
             tripId=tripId,
             crewId=crewId,
-            status = 0
-            )
-        query = session.query(crew)
-        query = query.filter(crew.crewId == crewId)
-        crew_data = query.first()
+            status=0
+        )
         session.add(new_joinRequest)
+        session.commit()
+        session.refresh(new_joinRequest)
+
         sincheongIn = crew_data.sincheongIn
         if sincheongIn is None:
             crew_data.sincheongIn = userId
-        elif userId in sincheongIn:
+        elif userId in sincheongIn.split(","):
             return {"result code": 404, "response": "Already joined"}
         else:
-            crew_data.sincheongIn = str(sincheongIn) + "," + userId
+            crew_data.sincheongIn = f"{sincheongIn},{userId}"
+        
         session.commit()
-        session.refresh(new_joinRequest)
-        return {"result code": 200, "response": crewId}
+
+        return {"result code": 200, "response": new_joinRequest.requestId}
+    except Exception as e:
+        session.rollback()
+        return {"result code": 500, "response": str(e)}
     finally:
         session.close()
 
@@ -506,20 +582,21 @@ async def updateUserProfileImage(
         session.close()
 
 @app.post('/updateUserPasswd', description="mySQL user Table의 비밀번호 업데이트")
-async def updateUserProfileImage(
+async def updateUserPasswd(
     userId: str = Form(...), 
-    passwd : str = Form(...)
+    passwd: str = Form(...)
 ):
     try:
         query = session.query(user).filter(user.userId == userId)
         user_data = query.first()
 
         if user_data:
-            user_data.passwd = passwd
+            hashed_password = bcrypt_context.hash(passwd.encode('utf-8'))
+            user_data.passwd = hashed_password
             session.commit()
-            return {"result code": 200, "response": passwd}
+            return {"result code": 200, "response": "Password updated successfully"}
         else:
-            return {"result code": 404, "response": "User not found"}
+            return {"result code": 404, "response": "user not found"}
     except Exception as e:
         session.rollback()
         return {"result code": 500, "response": str(e)}
@@ -641,15 +718,49 @@ async def updateCrewTripMate(
     finally:
         session.close()
 
+#지영 - 크루 삭제 기능추가
+@app.delete('/deleteCrew', description="mySQL crew Table에서 크루 삭제, 크루를 생성한 사용자만 가능")
+async def deleteCrew(request: Request):
+    session = sqldb.sessionmaker()
+    try:
+        data = await request.json()
+        crewId = data.get("crewId")
+        userId = data.get("userId")
+
+        # 크루 정보를 가져옵니다
+        crew_data = session.query(crew).filter(crew.crewId == crewId).first()
+
+        # 크루가 존재하는지 확인합니다
+        if not crew_data:
+            return {"result code": 404, "response": "Crew not found"}
+
+        # 크루를 생성한 사용자인지 확인합니다
+        if crew_data.tripmate != userId:
+            return {"result code": 403, "response": "You are not authorized to delete this crew"}
+
+        # 크루를 삭제합니다
+        session.delete(crew_data)
+        session.commit()
+
+        # 관련된 tripPlans의 crewId를 제거합니다
+        trip_plan = session.query(tripPlans).filter(tripPlans.crewId == crewId).first()
+        if trip_plan:
+            trip_plan.crewId = None
+            session.commit()
+
+        return {"result code": 200, "response": "Crew deleted successfully"}
+    except Exception as e:
+        session.rollback()
+        return {"result code": 500, "response": str(e)}
+    finally:
+        session.close()
 
 # 사용자 로그인 처리
 @app.post("/login")
 async def login(id: str = Form(...), passwd: str = Form(...), session: session = Depends(sqldb.sessionmaker)):
     try:
         user_data = session.query(user).filter(user.id == id).first()
-        if not user_data:
-            raise HTTPException(status_code=401, detail="Invalid username or password")
-        if user_data.passwd != passwd:
+        if not user_data or not bcrypt_context.verify(passwd, user_data.passwd):
             raise HTTPException(status_code=401, detail="Invalid username or password")
         
         profile_image_data = base64.b64encode(user_data.profileImage).decode('utf-8') if user_data.profileImage else None
@@ -736,7 +847,7 @@ async def kakao_login_callback(code: str):
             if not user_entry:
                 user_entry = user(
                     userId=str(uuid.uuid4()),
-                    id=user_id,
+                    id=kakao_id,
                     passwd="",  
                     nickname=nickname,
                     socialProfileImage=social_profile_image,
