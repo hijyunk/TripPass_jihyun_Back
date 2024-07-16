@@ -17,5 +17,6 @@ def getWeather(city, WEATHER_API_KEY):
         raise Exception("Invalid response from weather API")
     
     weather = data['weather'][0]['main']
+    icon = data['weather'][0]['icon']
     temp = data['main']['temp']
-    return weather, temp
+    return weather, icon, temp

@@ -133,10 +133,10 @@ async def getMyTripsTable(userId: str = None, tripId: str = None):
 async def getWeatherInfo(city: str):
     # getWeather 함수를 호출하여 날씨 정보를 가져옴
     try:
-        weather, temp = getWeather(city, WEATHER_API_KEY)
+        weather, icon, temp = getWeather(city, WEATHER_API_KEY)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    return {"city": city, "weather": weather, "temperature": temp}
+    return {"city": city, "weather": weather, "icon": icon, "temperature": temp}
 
 @app.get('/getTripPlans', description = "mySQL tripPlans Table 접근해서 정보 가져오기, tripId는 선택사항")
 async def getTripPlansTable(tripId: str = None):
