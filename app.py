@@ -490,6 +490,7 @@ async def insertTripPlansTable(
     finally:
         session.close()
 
+# 크루 생성할 때 사용. 만든 사람의 userId가 crewLeader로 들어감
 @app.post('/insertCrew', description="mySQL crew Table에 추가, crewId는 uuid로 생성, insert data 중 일부는 tripPlans planId를 이용해 가져오는거임")
 async def insertCrewTable(
     planId: str = Form(...),
@@ -502,7 +503,7 @@ async def insertCrewTable(
     image_data = await banner.read() if banner else None
     session = sqldb.sessionmaker()
     try:
-        # Get tripPlans data using planId
+        # planId를 이용해 tripPlans 데이터 가져오기
         trip_plan = session.query(tripPlans).filter(tripPlans.planId == planId).first()
         if not trip_plan:
             return {"result code": 404, "response": "Trip plan not found"}
@@ -510,7 +511,7 @@ async def insertCrewTable(
         userId = trip_plan.userId
         tripId = trip_plan.tripId
         
-        # Create new crew
+        # 새로운 crew 생성
         new_crew = crew(
             crewId=str(uuid.uuid4()), 
             planId=planId,
@@ -520,14 +521,15 @@ async def insertCrewTable(
             note=note,
             numOfMate=numOfMate,
             banner=image_data,
-            tripmate=userId
+            tripmate=userId,
+            crewLeader=userId       # crewLeader를 userId로 설정
         )
         
         session.add(new_crew)
         session.commit()
         session.refresh(new_crew)
         
-        # Update tripPlans table with new crewId
+        # tripPlans 테이블에 새로운 crewId 업데이트
         trip_plan.crewId = new_crew.crewId
         session.commit()
 
@@ -927,4 +929,38 @@ async def delete_trip(request: Request):
         raise HTTPException(status_code=500, detail="서버 내부 오류가 발생했습니다.")
     finally:
         # 세션 종료
+        session.close()
+
+#크루 신청인 있음 신청인 데이터 가져옴
+@app.get("/getCrewSincheongIn", description="mySQL crew Table에서 crew sincheongIn 가져오기")
+async def getCrewSincheongIn(crewId: str):
+    try:
+        query = session.query(crew)
+        query = query.filter(crew.crewId == crewId, crew.sincheongIn.isnot(None))
+        crew_data = query.first()
+        
+        if not crew_data:
+            return {"result code": 404, "response": "no sincheongIn data"}
+
+        sincheongIn_ids = crew_data.sincheongIn.split(",")
+        
+        sincheongIn_data = []
+        for user_id in sincheongIn_ids:
+            user_query = session.query(user).filter(user.userId == user_id)
+            user_data = user_query.first()
+            if user_data:
+                user_dict = {
+                    "userId": user_data.userId,
+                    "id": user_data.id,
+                    "nickname": user_data.nickname,
+                    "birthDate": user_data.birthDate,
+                    "sex": user_data.sex,
+                    "profileImage": base64.b64encode(user_data.profileImage).decode('utf-8') if user_data.profileImage else None,
+                    "socialProfileImage": user_data.socialProfileImage,
+                    "personality": user_data.personality
+                }
+                sincheongIn_data.append(user_dict)
+        
+        return {"result code": 200, "response": sincheongIn_data}
+    finally:
         session.close()
