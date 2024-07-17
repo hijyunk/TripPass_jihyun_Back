@@ -2,8 +2,8 @@ import os
 import uvicorn
 from fastapi import FastAPI, File, UploadFile, Form, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-import datetime as datetime, timedelta
-from datetime import timedelta
+from datetime import datetime, timedelta    #datetime, timedelta 임포트 방식 바꿈
+# import datetime as datetime, timedelta    기존 임포트 방식
 from fastapi.responses import RedirectResponse, JSONResponse
 from models import user, myTrips, joinRequests, tripPlans, crew
 from sqlalchemy import *
@@ -15,6 +15,9 @@ import httpx
 from passlib.context import CryptContext
 from ImageGeneration import imageGeneration
 from GetWeather import getWeather
+import logging      #로그 찍어보는 용도 필요없으면 지워도됨
+
+logger = logging.getLogger(__name__)    #로그 찍어보는 용도 필요없으면 지워도됨22
 
 app = FastAPI()
 origins =[
@@ -263,10 +266,10 @@ async def getMyCrewTable(tripId : str, userId : str):
     finally:
         session.close()
 
-@app.get('/getCrewCalc', description="mySQL crew Table 접근해서 정보 가져오기, tripId 입력 필수")
+@app.get('/getCrewCalc', description="mySQL crew Table 접근해서 정보 가져오기, mainTrip 입력 필수")
 async def getCrewTableCalc(mainTrip: str):
     try:
-        # getMyTrips 엔드포인트에서 tripId로 정보를 가져옴
+        # mainTrip에 해당하는 여행 정보를 가져옴
         mytrips_query = session.query(myTrips).filter(myTrips.tripId == mainTrip)
         mytrips_data = mytrips_query.first()
         
@@ -278,49 +281,52 @@ async def getCrewTableCalc(mainTrip: str):
         start_date = mytrips_data.startDate
         end_date = mytrips_data.endDate
         
-        # 날짜 범위를 생성
-        delta = timedelta(days=1)
-
         results = []
 
         # 날짜 범위를 반복하여 각 날짜에 대한 tripPlans와 crew 정보를 가져옴
         current_date = start_date
         while current_date <= end_date:
-            tripplans_query = session.query(tripPlans).filter(and_(tripPlans.date == current_date, tripPlans.crewId != None))
+            tripplans_query = session.query(tripPlans).filter(
+                tripPlans.date == current_date,
+                tripPlans.crewId != None
+            )
             tripplans_data = tripplans_query.all()
+            
             for plan in tripplans_data:
+                # 필터링 조건 추가: 동일한 나라와 도시에서 mainTrip에 해당하는 계획을 제외
                 if plan.tripId == mainTrip:
                     continue
-                
-                crew_query = session.query(crew).filter(and_(crew.planId == plan.planId, myTrips.contry == contry, myTrips.city == city)).first()
+
+                crew_query = session.query(crew).filter(crew.planId == plan.planId).first()
                 
                 if crew_query:
-                    crew_dict = {
-                        "crewId": crew_query.crewId,
-                        "planId": crew_query.planId,
-                        "userId": plan.userId,
-                        "tripId": crew_query.tripId,
-                        "date": plan.date,
-                        "time": plan.time,
-                        "place": plan.place,
-                        "title": crew_query.title,
-                        "contact": crew_query.contact,
-                        "note": crew_query.note,
-                        "numOfMate": crew_query.numOfMate,
-                        "banner": base64.b64encode(crew_query.banner).decode('utf-8') if crew_query.banner else None,
-                        "tripmate": crew_query.tripmate,
-                        "sincheongIn": crew_query.sincheongIn,
-                        "address": plan.address,
-                        "latitude": plan.latitude,
-                        "longitude": plan.longitude,
-                        "contry": contry,
-                        "city": city,
-                        "startDate": start_date,
-                        "endDate": end_date
-                    }
-                    results.append(crew_dict)
+                    # 추가 필터링: 동일한 나라와 도시인지 확인
+                    related_trip = session.query(myTrips).filter(myTrips.tripId == crew_query.tripId).first()
+                    if related_trip.contry == contry and related_trip.city == city:
+                        crew_dict = {
+                            "crewId": crew_query.crewId,
+                            "planId": crew_query.planId,
+                            "userId": plan.userId,
+                            "tripId": crew_query.tripId,
+                            "date": plan.date.strftime("%Y-%m-%d"),
+                            "time": plan.time,
+                            "place": plan.place,
+                            "title": crew_query.title,
+                            "contact": crew_query.contact,
+                            "note": crew_query.note,
+                            "numOfMate": crew_query.numOfMate,
+                            "banner": base64.b64encode(crew_query.banner).decode('utf-8') if crew_query.banner else None,
+                            "tripmate": crew_query.tripmate,
+                            "sincheongIn": crew_query.sincheongIn,
+                            "address": plan.address,
+                            "latitude": plan.latitude,
+                            "longitude": plan.longitude,
+                            "contry": contry,
+                            "city": city
+                        }
+                        results.append(crew_dict)
 
-            current_date += delta
+            current_date += timedelta(days=1)
         
         if not results:
             raise HTTPException(status_code=404, detail="No matching crew data found")
@@ -330,6 +336,7 @@ async def getCrewTableCalc(mainTrip: str):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         session.close()
+
 
 #지영 - 수정중
 # @app.get('/getJoinRequests', description = "mySQL joinRequests Table 접근해서 정보 가져오기, joinId는 선택사항")
